@@ -55,8 +55,33 @@ func linkPullRequestToIssue(jiraClient *jira.Client, pr *github.PullRequest, iss
 		title = title[len(issueKey+": "):]
 	}
 
+	issue, _, err := jiraClient.Issue.Get(issueKey, nil)
+	if err != nil {
+		klog.Fatal(err)
+	}
+
+	status := issue.Fields.Status.Name
+
+	switch pr.GetState() {
+	case "open":
+		if strings.Contains(title, "WIP") {
+			if status != "In Progress" {
+				klog.V(1).Infof("%s: got %s, want In Progress", issueKey, status)
+			}
+		} else {
+			if status != "Code Review" {
+				klog.V(1).Infof("%s: got %s, want In Progress", issueKey, status)
+			}
+		}
+	case "closed":
+		if pr.GetMerged() && status != "On QA" && status != "Done" {
+			klog.V(1).Infof("%s: got %s, want On QA or Done", issueKey, status)
+		}
+	default:
+		klog.Warningf("%s: unexpected state %q", pullRequestLink(pr), pr.GetState())
+	}
+
 	links, _, err := jiraClient.Issue.GetRemoteLinks(issueKey)
-	//issue, _, err := jiraClient.Issue.Get(issueKey, nil)
 	if err != nil {
 		klog.Fatal(err)
 	}
@@ -142,8 +167,7 @@ func main() {
 		}
 
 		for _, pr := range prs {
-			title := *pr.Title
-			match := keyRegexp.FindStringSubmatch(title)
+			match := keyRegexp.FindStringSubmatch(pr.GetTitle())
 			if match == nil {
 				continue
 			}
