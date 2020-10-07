@@ -47,6 +47,23 @@ func pullRequestLinkTitle(pr *github.PullRequest) string {
 	return fmt.Sprintf("%s#%d", pr.Base.Repo.GetFullName(), pr.GetNumber())
 }
 
+func pullRequestLabels(pr *github.PullRequest) []string {
+	var labels []string
+	for _, label := range pr.Labels {
+		labels = append(labels, label.GetName())
+	}
+	return labels
+}
+
+func contains(labels []string, name string) bool {
+	for _, label := range labels {
+		if label == name {
+			return true
+		}
+	}
+	return false
+}
+
 func linkPullRequestToIssue(jiraClient *jira.Client, pr *github.PullRequest, issueKey string) {
 	klog.V(3).Infof("Checking if %s is linked to %s...", pullRequestLinkTitle(pr), issueKey)
 
@@ -64,13 +81,18 @@ func linkPullRequestToIssue(jiraClient *jira.Client, pr *github.PullRequest, iss
 
 	switch pr.GetState() {
 	case "open":
+		labels := pullRequestLabels(pr)
+		if !contains(labels, "do-not-merge/hold") {
+			klog.V(1).Infof("The pull request %s is open and it's not on hold. Please make sure that it has got all approvals or put it on hold.", pullRequestLink(pr))
+		}
+
 		if strings.Contains(title, "WIP") {
 			if status != "In Progress" {
 				klog.V(1).Infof("%s: got %s, want In Progress", issueKey, status)
 			}
 		} else {
 			if status != "Code Review" {
-				klog.V(1).Infof("%s: got %s, want In Progress", issueKey, status)
+				klog.V(1).Infof("%s: got %s, want Code Review", issueKey, status)
 			}
 		}
 	case "closed":
