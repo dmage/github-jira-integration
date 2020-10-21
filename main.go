@@ -154,6 +154,54 @@ func linkPullRequestToIssue(jiraClient *jira.Client, pr *github.PullRequest, iss
 	}
 }
 
+func printPullRequestState(pr *github.PullRequest, hasJiraStory bool, hasBZ bool) {
+	if strings.Contains(pr.GetTitle(), "WIP") {
+		return
+	}
+
+	if !hasJiraStory && !hasBZ {
+		klog.V(1).Infof("The pull request %s is not assigned to a bug nor a story: %s", pullRequestLink(pr), pr.GetTitle())
+	}
+
+	labels := map[string]bool{}
+	for _, label := range pr.Labels {
+		labels[label.GetName()] = true
+	}
+
+	if labels["approved"] && labels["lgtm"] {
+		if labels["do-not-merge/hold"] {
+			klog.V(1).Infof("ACTION REQUIRED: Unhold: %s: %s", pullRequestLink(pr), pr.GetTitle())
+			return
+		}
+		if pr.Base.GetRef() != "master" && !labels["cherry-pick-approved"] {
+			klog.V(1).Infof("Awaiting cherry-pick-approved: %s: %s", pullRequestLink(pr), pr.GetTitle())
+			return
+		}
+		klog.V(1).Infof("Approved: %s: %s", pullRequestLink(pr), pr.GetTitle())
+		return
+	}
+
+	var assignees []string
+	for _, user := range pr.Assignees {
+		assignees = append(assignees, user.GetLogin())
+	}
+	if len(assignees) > 0 {
+		klog.V(1).Infof("Awaiting review from %s: %s: %s", strings.Join(assignees, ", "), pullRequestLink(pr), pr.GetTitle())
+		return
+	}
+
+	klog.V(1).Infof("ACTION REQUIRED: Review: %s: %s", pullRequestLink(pr), pr.GetTitle())
+}
+
+func assignedToTeam(pr *github.PullRequest) bool {
+	for _, user := range pr.Assignees {
+		if team[user.GetLogin()] {
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
@@ -209,18 +257,10 @@ func main() {
 		for _, pr := range prs {
 			match := keyRegexp.FindStringSubmatch(pr.GetTitle())
 
-			if pr.GetState() == "open" && (team[pr.User.GetLogin()] || teamRepos[pr.Base.Repo.GetFullName()]) {
-				if !strings.Contains(pr.GetTitle(), "WIP") {
-					if match == nil {
-						if !bugRegexp.MatchString(pr.GetTitle()) {
-							klog.V(1).Infof("The pull request %s is not assigned to a bug nor a story: %s", pullRequestLink(pr), pr.GetTitle())
-						} else {
-							klog.V(1).Infof("Awaiting review (bugfix): %s: %s", pullRequestLink(pr), pr.GetTitle())
-						}
-					} else {
-						klog.V(1).Infof("Awaiting review (feature): %s: %s", pullRequestLink(pr), pr.GetTitle())
-					}
-				}
+			if pr.GetState() == "open" && (team[pr.User.GetLogin()] || assignedToTeam(pr) || teamRepos[pr.Base.Repo.GetFullName()]) {
+				hasJiraStory := match != nil
+				hasBZ := bugRegexp.MatchString(pr.GetTitle())
+				printPullRequestState(pr, hasJiraStory, hasBZ)
 			}
 
 			if match == nil {
