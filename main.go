@@ -21,14 +21,27 @@ type OwnerName struct {
 var repositories = []OwnerName{
 	{Owner: "openshift", Name: "api"},
 	{Owner: "openshift", Name: "cluster-image-registry-operator"},
+	{Owner: "openshift", Name: "cluster-monitoring-operator"},
 	{Owner: "openshift", Name: "docker-distribution"},
 	{Owner: "openshift", Name: "image-registry"},
+	{Owner: "openshift", Name: "oc"},
 	{Owner: "openshift", Name: "openshift-apiserver"},
 	{Owner: "openshift", Name: "origin"},
+	{Owner: "openshift", Name: "release"},
 }
 
 var jiraProjects = []string{
 	"IR",
+}
+
+var team = map[string]bool{
+	"dmage":             true,
+	"ricardomaraschini": true,
+}
+
+var teamRepos = map[string]bool{
+	"openshift/cluster-image-registry-operator": true,
+	"openshift/image-registry":                  true,
 }
 
 func getEnv(name string) string {
@@ -164,6 +177,11 @@ func main() {
 		klog.Fatal(err)
 	}
 
+	bugRegexp, err := regexp.Compile(`Bug [0-9]+: `)
+	if err != nil {
+		klog.Fatal(err)
+	}
+
 	ctx := context.Background()
 
 	jiraClient, err := jira.NewClient(tp.Client(), baseURL)
@@ -190,6 +208,21 @@ func main() {
 
 		for _, pr := range prs {
 			match := keyRegexp.FindStringSubmatch(pr.GetTitle())
+
+			if pr.GetState() == "open" && (team[pr.User.GetLogin()] || teamRepos[pr.Base.Repo.GetFullName()]) {
+				if !strings.Contains(pr.GetTitle(), "WIP") {
+					if match == nil {
+						if !bugRegexp.MatchString(pr.GetTitle()) {
+							klog.V(1).Infof("The pull request %s is not assigned to a bug nor a story: %s", pullRequestLink(pr), pr.GetTitle())
+						} else {
+							klog.V(1).Infof("Awaiting review (bugfix): %s: %s", pullRequestLink(pr), pr.GetTitle())
+						}
+					} else {
+						klog.V(1).Infof("Awaiting review (feature): %s: %s", pullRequestLink(pr), pr.GetTitle())
+					}
+				}
+			}
+
 			if match == nil {
 				continue
 			}
